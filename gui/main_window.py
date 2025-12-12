@@ -343,11 +343,13 @@ class MainWindow(QMainWindow):
         # Update stats
         stats_text = f"시도: {attempts:,} / {2**128}\n"
         stats_text += f"속도: {self.scan_speed:.1f} keys/sec  |  예상 시간: {remaining_str}\n"
-        stats_text += f"상태: 스캔 중... (현재 키: {key_hex[:24]}...)"
+        # Show FULL key so user sees the changing bytes at the end
+        stats_text += f"상태: 스캔 중... (현재 키: {key_hex})"
         self.stats_label.setText(stats_text)
 
     def _on_key_found(self, key: bytes):
         """Handle key found"""
+        print(f"DEBUG: _on_key_found called with {key.hex()}")
         key_hex = ' '.join(f'{b:02X}' for b in key)
         self.result_edit.setPlainText(key_hex)
 
@@ -356,6 +358,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_complete(self, success: bool, message: str):
         """Handle scan completion"""
+        print(f"DEBUG: _on_scan_complete called. Success={success}, Message={message}")
         # Re-enable buttons
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -363,14 +366,23 @@ class MainWindow(QMainWindow):
 
         # Show message
         if success:
+            print("DEBUG: Showing Success MessageBox")
             QMessageBox.information(self, "스캔 완료", message)
+            print("DEBUG: Success MessageBox closed")
         else:
+            print("DEBUG: Showing Failure MessageBox")
             QMessageBox.information(self, "스캔 종료", message)
+            print("DEBUG: Failure MessageBox closed")
 
     def _on_error(self, message: str):
         """Handle error"""
-        # Just log errors, don't show popup for every error
         print(f"Error: {message}")
+
+        # Show popup for critical errors (Power ON failures)
+        if "Power ON 실패" in message or "스캔을 중지" in message:
+            print(f"DEBUG: Showing Critical Error MessageBox: {message}")
+            QMessageBox.critical(self, "스캔 오류", message)
+            print("DEBUG: Critical Error MessageBox closed")
 
     def _format_time(self, seconds: float) -> str:
         """Format seconds to human readable string"""

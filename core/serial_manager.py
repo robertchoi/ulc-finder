@@ -128,7 +128,7 @@ class SerialManager:
 
     def receive(self, expected_length: Optional[int] = None, timeout: Optional[float] = None) -> Optional[bytes]:
         """
-        Receive data from serial port
+        Receive data from serial port (with framing: STX + CCID + ETX + CHECKSUM)
 
         Args:
             expected_length: Expected number of bytes (None = read what's available)
@@ -138,6 +138,7 @@ class SerialManager:
             Received bytes or None if error/timeout
         """
         if not self.is_connected or not self.serial_port:
+            print("[RX] Not connected or no serial port")
             return None
 
         try:
@@ -146,24 +147,74 @@ class SerialManager:
             if timeout is not None:
                 self.serial_port.timeout = timeout
 
+            # Check how many bytes are waiting
+            waiting = self.serial_port.in_waiting
+            print(f"[RX] Bytes waiting in buffer: {waiting}")
+
             if expected_length:
                 # Read exact number of bytes
                 data = self.serial_port.read(expected_length)
+                print(f"[RX] Read {len(data)} bytes (expected {expected_length})")
             else:
-                # Read header first (10 bytes)
-                header = self.serial_port.read(10)
-                if len(header) < 10:
+                # Read framed message: STX + CCID + ETX + CHECKSUM
+                # First, read STX
+                print("[RX] Reading STX...")
+                stx = self.serial_port.read(1)
+                if len(stx) != 1:
+                    print(f"[RX] No STX received")
                     return None
 
-                # Parse dwLength from header (bytes 1-4, little-endian)
-                dw_length = int.from_bytes(header[1:5], byteorder='little')
+                if stx[0] != 0x02:
+                    print(f"[RX] Invalid STX: 0x{stx[0]:02X}")
+                    return None
 
-                # Read remaining data
+                print(f"[RX] STX received: 0x{stx[0]:02X}")
+
+                # Read CCID header (10 bytes after STX)
+                print("[RX] Reading 10-byte CCID header...")
+                ccid_header = self.serial_port.read(10)
+                print(f"[RX] CCID header received: {len(ccid_header)} bytes")
+
+                if len(ccid_header) < 10:
+                    print(f"[RX] Incomplete CCID header (got {len(ccid_header)}/10 bytes)")
+                    if len(ccid_header) > 0:
+                        print(f"[RX] Partial data: {' '.join(f'{b:02X}' for b in ccid_header)}")
+                    return None
+
+                # Parse dwLength from CCID header (bytes 1-4, little-endian)
+                # Note: ccid_header[0] is bMessageType, ccid_header[1:5] is dwLength
+                dw_length = int.from_bytes(ccid_header[1:5], byteorder='little')
+                print(f"[RX] Payload length from CCID header: {dw_length} bytes")
+
+                # Read CCID payload if any
                 if dw_length > 0:
-                    payload = self.serial_port.read(dw_length)
-                    data = header + payload
+                    print(f"[RX] Reading {dw_length} bytes CCID payload...")
+                    ccid_payload = self.serial_port.read(dw_length)
+                    print(f"[RX] CCID payload received: {len(ccid_payload)} bytes")
                 else:
-                    data = header
+                    ccid_payload = b''
+
+                # Read ETX (1 byte)
+                print("[RX] Reading ETX...")
+                etx = self.serial_port.read(1)
+                if len(etx) != 1:
+                    print(f"[RX] No ETX received")
+                    return None
+
+                print(f"[RX] ETX received: 0x{etx[0]:02X}")
+
+                # Read checksum (1 byte)
+                print("[RX] Reading checksum...")
+                checksum = self.serial_port.read(1)
+                if len(checksum) != 1:
+                    print(f"[RX] No checksum received")
+                    return None
+
+                print(f"[RX] Checksum received: 0x{checksum[0]:02X}")
+
+                # Assemble complete framed message
+                data = stx + ccid_header + ccid_payload + etx + checksum
+                print(f"[RX] Total framed message: {len(data)} bytes")
 
             # Restore original timeout
             if timeout is not None:
@@ -172,7 +223,9 @@ class SerialManager:
             return data if len(data) > 0 else None
 
         except Exception as e:
-            print(f"Receive error: {e}")
+            print(f"[RX] Receive error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def send_receive(self, data: bytes, timeout: Optional[float] = None) -> Optional[bytes]:

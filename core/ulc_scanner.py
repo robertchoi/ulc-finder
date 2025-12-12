@@ -142,9 +142,12 @@ class ULCScanner:
             response = self.serial.send_receive(cmd, timeout=2.0)
 
             if not response:
-                if self.on_error:
-                    self.on_error("Power ON: No response")
                 print("[RX] No response received")
+                print("[ERROR] Power ON failed - stopping scan")
+                if self.on_error:
+                    self.on_error("Power ON 실패: 응답 없음. 스캔을 중지합니다.")
+                # Stop scanning on Power ON failure
+                self.is_scanning = False
                 return False
 
             print(f"[RX] Response ({len(response)} bytes): {' '.join(f'{b:02X}' for b in response)}")
@@ -153,15 +156,18 @@ class ULCScanner:
             print(f"     Message Type: 0x{msg_type:02X}, Status: 0x{status:02X}, Error: 0x{error:02X}")
 
             if not self.ccid.is_success(status, error):
+                print(f"[WARNING] Power ON returned error status (0x{status:02X}, 0x{error:02X}) - attempting to proceed")
                 if self.on_error:
-                    self.on_error(f"Power ON failed: status={status:02X} error={error:02X}")
-                return False
+                    self.on_error(f"Power ON 경고: status=0x{status:02X} error=0x{error:02X}. 계속 진행합니다.")
+                # Continue to Get UID even if Power ON failed
+
 
             # Small delay
             time.sleep(0.05)
 
             # Step 2: Get UID
             cmd = self.ccid.get_uid()
+            print(f"[TX] Get UID: {' '.join(f'{b:02X}' for b in cmd)}")
             response = self.serial.send_receive(cmd, timeout=1.0)
             if not response:
                 if self.on_error:
@@ -173,12 +179,21 @@ class ULCScanner:
                 if self.on_error:
                     self.on_error(f"Get UID failed: status={status:02X} error={error:02X}")
                 # Continue anyway - UID not critical for auth
+            else:
+                # Log the UID
+                if len(payload) >= 2:
+                    uid_bytes = payload[:-2] # Remove SW1 SW2
+                    uid_str = ' '.join(f'{b:02X}' for b in uid_bytes)
+                    print(f"[INFO] Card UID: {uid_str}")
+                    if self.on_error: # Use on_error to send info to GUI log if needed, or just print
+                        pass # GUI doesn't have a generic info callback yet, just print to console is fine for now
 
             # Small delay
             time.sleep(0.05)
 
             # Step 3: Load Key
             cmd = self.ccid.load_key(key, slot=3)
+            print(f"[TX] Load Key: {' '.join(f'{b:02X}' for b in cmd)}")
             response = self.serial.send_receive(cmd, timeout=1.0)
             if not response:
                 if self.on_error:
@@ -196,6 +211,7 @@ class ULCScanner:
 
             # Step 4: Authenticate
             cmd = self.ccid.authenticate(page=4, key_slot=3)
+            print(f"[TX] Authenticate: {' '.join(f'{b:02X}' for b in cmd)}")
             response = self.serial.send_receive(cmd, timeout=2.0)
             if not response:
                 if self.on_error:
@@ -203,11 +219,19 @@ class ULCScanner:
                 return False
 
             msg_type, status, error, payload = self.ccid.parse_response(response)
+            
+            # Log Authenticate response for debugging
+            if len(payload) > 0:
+                print(f"[RX] Authenticate Response Payload: {' '.join(f'{b:02X}' for b in payload)}")
+            else:
+                print(f"[RX] Authenticate Response: Status=0x{status:02X} Error=0x{error:02X} (No Payload)")
 
             # Check if authentication successful
             if self.ccid.is_auth_success(status, error, payload):
                 return True
 
+            # Auth failed
+            # print(f"DEBUG: Auth failed for key {key.hex()[:8]}... - Retrying next key")
             return False
 
         except Exception as e:

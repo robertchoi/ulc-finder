@@ -22,8 +22,12 @@ class CCIDMessage:
 class CCIDProtocol:
     """CCID Protocol Handler for ULC Reader"""
 
+    # Framing bytes
+    STX = 0x02  # Start of Text
+    ETX = 0x03  # End of Text
+
     def __init__(self):
-        self.sequence = 0
+        self.sequence = 1  # Start from 1, not 0
 
     def get_next_seq(self) -> int:
         """Get next sequence number and increment"""
@@ -32,15 +36,88 @@ class CCIDProtocol:
         return seq
 
     def reset_seq(self):
-        """Reset sequence number to 0"""
-        self.sequence = 0
+        """Reset sequence number to 1"""
+        self.sequence = 1  # Start from 1, not 0
+
+    def _calculate_checksum(self, data: bytes) -> int:
+        """
+        Calculate XOR checksum for data
+
+        Args:
+            data: Bytes to calculate checksum for
+
+        Returns:
+            Checksum byte
+        """
+        checksum = 0
+        for byte in data:
+            checksum ^= byte
+        return checksum
+
+    def _frame_message(self, ccid_message: bytes) -> bytes:
+        """
+        Add STX, ETX, and checksum framing to CCID message
+
+        Args:
+            ccid_message: Raw CCID message
+
+        Returns:
+            Framed message: STX + CCID + ETX + CHECKSUM
+        """
+        # Build CCID + ETX for checksum calculation (STX not included)
+        data_for_checksum = bytearray(ccid_message)
+        data_for_checksum.append(self.ETX)
+
+        # Calculate checksum of CCID + ETX (excluding STX)
+        checksum = self._calculate_checksum(data_for_checksum)
+
+        # Build complete frame: STX + CCID + ETX + CHECKSUM
+        framed = bytearray([self.STX])
+        framed.extend(ccid_message)
+        framed.append(self.ETX)
+        framed.append(checksum)
+
+        return bytes(framed)
+
+    def _unframe_message(self, framed_data: bytes) -> bytes:
+        """
+        Remove STX, ETX, and checksum framing from message
+
+        Args:
+            framed_data: Framed message (STX + CCID + ETX + CHECKSUM)
+
+        Returns:
+            Raw CCID message
+        """
+        if len(framed_data) < 4:  # Minimum: STX + 1 byte + ETX + CHK
+            raise ValueError(f"Framed message too short: {len(framed_data)} bytes")
+
+        if framed_data[0] != self.STX:
+            raise ValueError(f"Missing STX: first byte is 0x{framed_data[0]:02X}")
+
+        # Find ETX (second to last byte)
+        if framed_data[-2] != self.ETX:
+            raise ValueError(f"Missing ETX: byte at -2 is 0x{framed_data[-2]:02X}")
+
+        # Extract CCID message (between STX and ETX)
+        ccid_message = framed_data[1:-2]
+
+        # Verify checksum (checksum is calculated on CCID + ETX, excluding STX)
+        data_for_checksum = framed_data[1:-1]  # CCID + ETX (skip STX and checksum)
+        expected_checksum = self._calculate_checksum(data_for_checksum)
+        actual_checksum = framed_data[-1]
+
+        if expected_checksum != actual_checksum:
+            print(f"[WARNING] Checksum mismatch: expected 0x{expected_checksum:02X}, got 0x{actual_checksum:02X}")
+
+        return ccid_message
 
     # ========== Command Construction ==========
 
     def power_on(self) -> bytes:
         """
         Construct Power ON command
-        Returns: CCID message bytes
+        Returns: Framed CCID message bytes
         """
         seq = self.get_next_seq()
         message = bytearray([
@@ -50,12 +127,12 @@ class CCIDProtocol:
             seq,                                 # bSeq
             0x00, 0x00, 0x00                    # bSpecific
         ])
-        return bytes(message)
+        return self._frame_message(bytes(message))
 
     def power_off(self) -> bytes:
         """
         Construct Power OFF command
-        Returns: CCID message bytes
+        Returns: Framed CCID message bytes
         """
         seq = self.get_next_seq()
         message = bytearray([
@@ -65,12 +142,12 @@ class CCIDProtocol:
             seq,                                 # bSeq
             0x00, 0x00, 0x00                    # bSpecific
         ])
-        return bytes(message)
+        return self._frame_message(bytes(message))
 
     def get_uid(self) -> bytes:
         """
         Construct Get UID command (FF CA 00 00 00)
-        Returns: CCID message bytes
+        Returns: Framed CCID message bytes
         """
         seq = self.get_next_seq()
         apdu = [0xFF, 0xCA, 0x00, 0x00, 0x00]
@@ -83,7 +160,7 @@ class CCIDProtocol:
             0x00, 0x00, 0x00                    # bSpecific
         ])
         message.extend(apdu)
-        return bytes(message)
+        return self._frame_message(bytes(message))
 
     def load_key(self, key_bytes: bytes, slot: int = 3) -> bytes:
         """
@@ -93,7 +170,7 @@ class CCIDProtocol:
             key_bytes: 16-byte 3DES key
             slot: Key slot number (default: 3)
 
-        Returns: CCID message bytes
+        Returns: Framed CCID message bytes
         """
         if len(key_bytes) != 16:
             raise ValueError("Key must be exactly 16 bytes")
@@ -110,7 +187,7 @@ class CCIDProtocol:
             0x00, 0x00, 0x00                    # bSpecific
         ])
         message.extend(apdu)
-        return bytes(message)
+        return self._frame_message(bytes(message))
 
     def authenticate(self, page: int = 4, key_slot: int = 3) -> bytes:
         """
@@ -120,7 +197,7 @@ class CCIDProtocol:
             page: Page number to authenticate (default: 4)
             key_slot: Key slot number (default: 3)
 
-        Returns: CCID message bytes
+        Returns: Framed CCID message bytes
         """
         seq = self.get_next_seq()
         apdu = [
@@ -142,32 +219,35 @@ class CCIDProtocol:
             0x00, 0x00, 0x00                    # bSpecific
         ])
         message.extend(apdu)
-        return bytes(message)
+        return self._frame_message(bytes(message))
 
     # ========== Response Parsing ==========
 
     def parse_response(self, data: bytes) -> Tuple[int, int, int, bytes]:
         """
-        Parse CCID response message
+        Parse CCID response message (with framing)
 
         Args:
-            data: Response bytes
+            data: Framed response bytes (STX + CCID + ETX + CHECKSUM)
 
         Returns:
             Tuple of (bMessageType, bStatus, bError, payload)
         """
-        if len(data) < 10:
-            raise ValueError(f"Response too short: {len(data)} bytes")
+        # Remove framing first
+        ccid_data = self._unframe_message(data)
 
-        bMessageType = data[0]
-        dwLength = struct.unpack('<I', data[1:5])[0]
-        bSlot = data[5]
-        bSeq = data[6]
-        bStatus = data[7]
-        bError = data[8]
-        bSpecific = data[9]
+        if len(ccid_data) < 10:
+            raise ValueError(f"CCID response too short: {len(ccid_data)} bytes")
 
-        payload = data[10:10+dwLength] if dwLength > 0 else b''
+        bMessageType = ccid_data[0]
+        dwLength = struct.unpack('<I', ccid_data[1:5])[0]
+        bSlot = ccid_data[5]
+        bSeq = ccid_data[6]
+        bStatus = ccid_data[7]
+        bError = ccid_data[8]
+        bSpecific = ccid_data[9]
+
+        payload = ccid_data[10:10+dwLength] if dwLength > 0 else b''
 
         return bMessageType, bStatus, bError, payload
 
@@ -197,21 +277,23 @@ class CCIDProtocol:
             True if authentication successful, False otherwise
         """
         # Check APDU status words (SW1 SW2)
+        # Check APDU status words (SW1 SW2)
         if len(payload) >= 2:
-            sw1 = payload[-2]
-            sw2 = payload[-1]
-
-            # 90 00 = Success
-            if sw1 == 0x90 and sw2 == 0x00:
+            # For General Authenticate with ULC, success should be 90 00.
+            # However, some readers return "90 00 90 00" (Card Success + Reader Success).
+            # And failure is "63 00 90 00" (Card Fail + Reader Success).
+            # So we check if the payload STARTS with 90 00.
+            if payload.startswith(b'\x90\x00'):
                 return True
+            
+            # If payload contains more bytes and doesn't start with 90 00, it's a failure.
+            # e.g. 63 00 90 00
+            return False
 
-            # 63 00 = Authentication failed
-            if sw1 == 0x63 and sw2 == 0x00:
-                return False
-
-        # Also check CCID status
+        # If no payload (no SW1 SW2), fall back to CCID status
+        # But General Authenticate SHOULD return SW1 SW2.
         if bStatus == 0x00 and bError == 0x00:
-            return True
+            return False # Safer to assume failure if no SW1 SW2
 
         # 0x69 = Authentication error
         if bError == 0x69:
