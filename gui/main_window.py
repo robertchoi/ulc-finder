@@ -380,8 +380,8 @@ class MainWindow(QMainWindow):
             progress.setLabelText(message)
             QApplication.processEvents()
 
-        # Write key to card
-        self.scanner.write_key_to_card(key, callback=update_progress)
+        # Write key to card (use the same key for both writing and authentication)
+        self.scanner.write_key_to_card(key, auth_key=key, callback=update_progress)
 
         progress.close()
 

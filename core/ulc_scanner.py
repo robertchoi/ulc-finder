@@ -397,6 +397,34 @@ class ULCScanner:
             msg_type, status, error, payload = self.ccid.parse_response(response)
             print(f"[RX] Authenticate: Status=0x{status:02X}, Error=0x{error:02X}")
 
+            time.sleep(0.1)
+
+            # Step 5: Load key from input field (if provided)
+            if auth_key is not None:
+                if len(auth_key) != 16:
+                    return False, f"입력 키는 정확히 16바이트여야 합니다 (현재: {len(auth_key)}바이트)"
+
+                if callback:
+                    callback("입력 필드의 키 로딩 중...")
+
+                cmd = self.ccid.load_key(auth_key, slot=3)
+                print(f"[TX] Load Key from input field: {' '.join(f'{b:02X}' for b in auth_key)}")
+                response = self.serial.send_receive(cmd, timeout=1.0)
+
+                if not response:
+                    return False, "입력 키 로드 실패: 응답 없음"
+
+                msg_type, status, error, payload = self.ccid.parse_response(response)
+                print(f"[RX] Load Key from input: Status=0x{status:02X}, Error=0x{error:02X}")
+
+                if not self.ccid.is_success(status, error):
+                    # Check if response has SW1 SW2
+                    if len(payload) >= 2:
+                        sw1, sw2 = payload[0], payload[1]
+                        if sw1 != 0x90 or sw2 != 0x00:
+                            return False, f"입력 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
+
+                time.sleep(0.1)
 
             if callback:
                 callback("키 쓰기 완료!")
