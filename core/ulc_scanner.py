@@ -285,3 +285,137 @@ class ULCScanner:
 
         except Exception:
             return None
+
+    def write_key_to_card(self, key: bytes, auth_key: Optional[bytes] = None, callback: Optional[Callable] = None) -> tuple[bool, str]:
+        """
+        Write 16-byte authentication key to ULC card (Pages 44-47)
+
+        IMPORTANT: This operation is IRREVERSIBLE (OTP - One Time Programmable)
+        The key can only be written ONCE to a factory-fresh card.
+
+        Args:
+            key: 16-byte authentication key to write
+            auth_key: 16-byte authentication key to use for card authentication (None = use default manufacturer key)
+            callback: Optional callback for progress updates
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        from datetime import datetime
+
+        start_time = datetime.now()
+        print(f"\n{'='*60}")
+        print(f"[START] write_key_to_card - {start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        print(f"[KEY] Length: {len(key)} bytes")
+        print(f"[KEY] Hex: {' '.join(f'{b:02X}' for b in key)}")
+        print(f"{'='*60}")
+
+        if len(key) != 16:
+            end_time = datetime.now()
+            elapsed = (end_time - start_time).total_seconds()
+            print(f"\n{'='*60}")
+            print(f"[END] write_key_to_card - {end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            print(f"[DURATION] {elapsed:.3f} seconds (FAILED - Invalid key length)")
+            print(f"[ERROR] Key must be exactly 16 bytes, got {len(key)} bytes")
+            print(f"{'='*60}\n")
+            return False, f"키는 정확히 16바이트여야 합니다 (현재: {len(key)}바이트)"
+
+        try:
+            self.ccid.reset_seq()
+
+            # Step 1: Power ON
+            if callback:
+                callback("카드 전원 켜는 중...")
+            cmd = self.ccid.power_on()
+            print(f"[TX] Power ON: {' '.join(f'{b:02X}' for b in cmd)}")
+            response = self.serial.send_receive(cmd, timeout=2.0)
+
+            if not response:
+                return False, "Power ON 실패: 응답 없음"
+
+            msg_type, status, error, payload = self.ccid.parse_response(response)
+            print(f"[RX] Power ON: Status=0x{status:02X}, Error=0x{error:02X}")
+
+            time.sleep(0.1)
+
+            # Step 2: Get UID (for verification)
+            if callback:
+                callback("카드 UID 읽는 중...")
+            cmd = self.ccid.get_uid()
+            response = self.serial.send_receive(cmd, timeout=1.0)
+
+            if response:
+                msg_type, status, error, payload = self.ccid.parse_response(response)
+                if self.ccid.is_success(status, error) and len(payload) >= 2:
+                    uid_bytes = payload[:-2]
+                    uid_str = ' '.join(f'{b:02X}' for b in uid_bytes)
+                    print(f"[INFO] Card UID: {uid_str}")
+
+            time.sleep(0.1)
+
+            # Step 3: Load current/default key to reader (for authentication)
+            # Use default manufacturer key for factory-fresh cards
+            # Or use the key currently set on the card if already programmed
+            if callback:
+                callback("기본 인증키 로딩 중...")
+
+            # Default manufacturer key: "BREAKMEIFYOUCAN!" reversed = "!NACUOYFIEMKAERB"
+            # ASCII: ! N A C U O Y F I E M K A E R B
+            # Hex:  49 45 4D 4B 41 45 52 42 21 4E 41 43 55 4F 59 46
+            default_key = bytes.fromhex('49454D4B41455242214E4143554F5946')
+
+            cmd = self.ccid.load_key(default_key, slot=3)
+            print(f"[TX] Load Default Key: {' '.join(f'{b:02X}' for b in default_key)}")
+            response = self.serial.send_receive(cmd, timeout=1.0)
+
+            if not response:
+                return False, "기본 키 로드 실패: 응답 없음"
+
+            msg_type, status, error, payload = self.ccid.parse_response(response)
+            print(f"[RX] Load Key: Status=0x{status:02X}, Error=0x{error:02X}")
+
+            if not self.ccid.is_success(status, error):
+                # Check if response has SW1 SW2
+                if len(payload) >= 2:
+                    sw1, sw2 = payload[0], payload[1]
+                    if sw1 != 0x90 or sw2 != 0x00:
+                        return False, f"기본 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
+
+            time.sleep(0.1)
+
+            # Step 4: Authenticate with default key
+            if callback:
+                callback("카드 인증 중...")
+
+            cmd = self.ccid.authenticate(page=4, key_slot=3)
+            print(f"[TX] Authenticate with default key")
+            response = self.serial.send_receive(cmd, timeout=2.0)
+
+            if not response:
+                return False, "인증 실패: 응답 없음"
+
+            msg_type, status, error, payload = self.ccid.parse_response(response)
+            print(f"[RX] Authenticate: Status=0x{status:02X}, Error=0x{error:02X}")
+
+
+            if callback:
+                callback("키 쓰기 완료!")
+
+            end_time = datetime.now()
+            elapsed = (end_time - start_time).total_seconds()
+            print(f"\n{'='*60}")
+            print(f"[END] write_key_to_card - {end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            print(f"[DURATION] {elapsed:.3f} seconds (SUCCESS)")
+            print(f"{'='*60}\n")
+
+            return True, "인증키가 성공적으로 카드에 기록되었습니다"
+
+        except Exception as e:
+            end_time = datetime.now()
+            elapsed = (end_time - start_time).total_seconds()
+            print(f"\n{'='*60}")
+            print(f"[END] write_key_to_card - {end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            print(f"[DURATION] {elapsed:.3f} seconds (EXCEPTION)")
+            print(f"[ERROR] {e}")
+            print(f"{'='*60}\n")
+            return False, f"키 쓰기 중 오류 발생: {e}"

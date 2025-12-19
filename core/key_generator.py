@@ -4,6 +4,7 @@ Handles 16-byte key generation and incrementation
 """
 
 from typing import Optional
+import secrets
 
 
 class KeyGenerator:
@@ -136,8 +137,8 @@ class KeyGenerator:
 
 
 # Default manufacturer key for ULC
-DEFAULT_MANUFACTURER_KEY = bytes.fromhex('494545444B414552422145414355554659')
-# ASCII: "IEMKAERB!NACUOYF" = "BREAKMEIFYOUCAN!" reversed
+DEFAULT_MANUFACTURER_KEY = bytes.fromhex('214E4143554F594649454D4B41455242')
+# ASCII: "!NACUOYFIEMKAERB" = "BREAKMEIFYOUCAN!" reversed
 
 
 def create_key_generator(start_key_hex: str) -> KeyGenerator:
@@ -152,3 +153,13 @@ def create_key_generator(start_key_hex: str) -> KeyGenerator:
     """
     start_key = KeyGenerator.parse_key(start_key_hex)
     return KeyGenerator(start_key)
+
+
+def generate_random_key() -> bytes:
+    """
+    Generate a cryptographically secure random 16-byte key
+
+    Returns:
+        16-byte random key
+    """
+    return secrets.token_bytes(16)

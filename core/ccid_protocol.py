@@ -221,6 +221,40 @@ class CCIDProtocol:
         message.extend(apdu)
         return self._frame_message(bytes(message))
 
+    def write_page(self, page: int, data: bytes) -> bytes:
+        """
+        Construct Write Page command (FF D6 00 page Lc data)
+
+        Args:
+            page: Page number to write (0x00-0x2F for ULC)
+            data: 4 bytes to write to the page
+
+        Returns: Framed CCID message bytes
+
+        Raises:
+            ValueError: If data is not exactly 4 bytes
+        """
+        if len(data) != 4:
+            raise ValueError(f"Page data must be exactly 4 bytes, got {len(data)}")
+
+        seq = self.get_next_seq()
+        apdu = [
+            0xFF, 0xD6,              # CLA INS (UPDATE BINARY)
+            0x00, page,              # P1 P2 (page address)
+            0x04                     # Lc (4 bytes)
+        ]
+        apdu.extend(data)
+
+        message = bytearray([
+            CCIDMessage.PC_TO_RDR_XFRBLOCK,     # bMessageType
+            len(apdu), 0x00, 0x00, 0x00,        # dwLength
+            0x00,                                # bSlot
+            seq,                                 # bSeq
+            0x00, 0x00, 0x00                    # bSpecific
+        ])
+        message.extend(apdu)
+        return self._frame_message(bytes(message))
+
     # ========== Response Parsing ==========
 
     def parse_response(self, data: bytes) -> Tuple[int, int, int, bytes]:

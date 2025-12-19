@@ -4,7 +4,8 @@ Main Window GUI for ULC Finder
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                               QGroupBox, QLabel, QComboBox, QPushButton,
-                              QPlainTextEdit, QProgressBar, QMessageBox)
+                              QPlainTextEdit, QProgressBar, QMessageBox,
+                              QProgressDialog, QApplication)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
 import sys
@@ -15,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.serial_manager import SerialManager
 from core.ulc_scanner import ULCScanner, ScanResult
-from core.key_generator import KeyGenerator
+from core.key_generator import KeyGenerator, generate_random_key
 import time
 
 
@@ -164,23 +165,40 @@ class MainWindow(QMainWindow):
         self.start_key_edit.setFont(font)
         layout.addWidget(self.start_key_edit)
 
-        # Buttons
-        btn_layout = QHBoxLayout()
+        # Buttons row 1: Start and Stop
+        btn_layout1 = QHBoxLayout()
 
         self.start_btn = QPushButton("시작")
         self.start_btn.setEnabled(False)
         self.start_btn.clicked.connect(self._start_scan)
         self.start_btn.setStyleSheet("QPushButton { font-size: 14px; padding: 8px; }")
-        btn_layout.addWidget(self.start_btn)
+        btn_layout1.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton("정지")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop_scan)
         self.stop_btn.setStyleSheet("QPushButton { font-size: 14px; padding: 8px; }")
-        btn_layout.addWidget(self.stop_btn)
+        btn_layout1.addWidget(self.stop_btn)
 
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
+        btn_layout1.addStretch()
+        layout.addLayout(btn_layout1)
+
+        # Buttons row 2: Generate Key and Write Key
+        btn_layout2 = QHBoxLayout()
+
+        self.generate_key_btn = QPushButton("랜덤 인증키 발급")
+        self.generate_key_btn.clicked.connect(self._generate_random_key)
+        self.generate_key_btn.setStyleSheet("QPushButton { font-size: 12px; padding: 6px; background-color: #4CAF50; color: white; }")
+        btn_layout2.addWidget(self.generate_key_btn)
+
+        self.write_key_btn = QPushButton("카드에 인증키 쓰기")
+        self.write_key_btn.setEnabled(False)
+        self.write_key_btn.clicked.connect(self._write_key_to_card)
+        self.write_key_btn.setStyleSheet("QPushButton { font-size: 12px; padding: 6px; background-color: #FF5722; color: white; }")
+        btn_layout2.addWidget(self.write_key_btn)
+
+        btn_layout2.addStretch()
+        layout.addLayout(btn_layout2)
 
         group.setLayout(layout)
         return group
@@ -256,6 +274,7 @@ class MainWindow(QMainWindow):
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.start_btn.setEnabled(True)
+            self.write_key_btn.setEnabled(True)
             QMessageBox.information(self, "연결 성공", f"{port}에 연결되었습니다.")
         else:
             print("Failed to open serial port")
@@ -276,6 +295,7 @@ class MainWindow(QMainWindow):
         self.connect_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
+        self.write_key_btn.setEnabled(False)
 
     def _start_scan(self):
         """Start key scanning"""
@@ -295,6 +315,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
+        self.write_key_btn.setEnabled(False)
 
         # Start time
         self.start_time = time.time()
@@ -312,6 +333,62 @@ class MainWindow(QMainWindow):
         if self.scan_worker:
             self.scan_worker.stop()
             self.scan_worker.wait()
+
+    def _generate_random_key(self):
+        """Generate and display a random 16-byte authentication key"""
+        # Generate cryptographically secure random key
+        random_key = generate_random_key()
+
+        # Format as hex with spaces
+        key_hex = ' '.join(f'{b:02X}' for b in random_key)
+
+        # Display in start key field
+        self.start_key_edit.setPlainText(key_hex)
+
+        # Show confirmation message
+        msg = f"새로운 랜덤 인증키가 생성되었습니다:\n\n{key_hex}\n\n"
+        msg += "이 키를 안전한 곳에 백업하세요.\n"
+        msg += "'카드에 인증키 쓰기' 버튼을 눌러 카드에 기록할 수 있습니다."
+        QMessageBox.information(self, "인증키 발급 완료", msg)
+
+    def _write_key_to_card(self):
+        """Write authentication key to ULC card"""
+        # Parse key from input field
+        try:
+            hex_str = self.start_key_edit.toPlainText()
+            key = KeyGenerator.parse_key(hex_str)
+        except ValueError as e:
+            QMessageBox.critical(self, "입력 오류", f"키 형식이 잘못되었습니다:\n{e}")
+            return
+
+        # Disable buttons during write
+        self.write_key_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.disconnect_btn.setEnabled(False)
+
+        # Progress dialog
+        progress = QProgressDialog("카드에 키를 쓰는 중...", "취소", 0, 0, self)
+        progress.setWindowTitle("인증키 쓰기")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)  # No cancel button
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+
+        def update_progress(message: str):
+            """Update progress dialog"""
+            progress.setLabelText(message)
+            QApplication.processEvents()
+
+        # Write key to card
+        self.scanner.write_key_to_card(key, callback=update_progress)
+
+        progress.close()
+
+        # Re-enable buttons
+        self.write_key_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+        self.disconnect_btn.setEnabled(True)
 
     def _on_progress_update(self, progress: float, attempts: int, current_key: bytes):
         """Handle progress update"""
@@ -363,6 +440,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.disconnect_btn.setEnabled(True)
+        self.write_key_btn.setEnabled(True)
 
         # Show message
         if success:
