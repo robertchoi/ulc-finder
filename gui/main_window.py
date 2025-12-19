@@ -381,9 +381,13 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
         # Write key to card (use the same key for both writing and authentication)
-        self.scanner.write_key_to_card(key, auth_key=key, callback=update_progress)
+        success, message = self.scanner.write_key_to_card(key, auth_key=key, callback=update_progress)
 
         progress.close()
+
+        # Show result message
+        if not success:
+            QMessageBox.critical(self, "인증키 쓰기 실패", f"인증키 쓰기에 실패했습니다.\n\n{message}")
 
         # Re-enable buttons
         self.write_key_btn.setEnabled(True)

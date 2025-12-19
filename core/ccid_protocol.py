@@ -255,6 +255,32 @@ class CCIDProtocol:
         message.extend(apdu)
         return self._frame_message(bytes(message))
 
+    def write_auth_key(self) -> bytes:
+        """
+        Construct Write Authentication Key command (FF 87 00 00 00)
+
+        This command writes the previously loaded key to pages 44-47.
+        The key must be loaded first using load_key().
+
+        Returns: Framed CCID message bytes
+        """
+        seq = self.get_next_seq()
+        apdu = [
+            0xFF, 0x87,              # CLA INS (Write Authentication Key)
+            0x00, 0x00,              # P1 P2
+            0x00                     # Le (0 bytes expected)
+        ]
+
+        message = bytearray([
+            CCIDMessage.PC_TO_RDR_XFRBLOCK,     # bMessageType
+            len(apdu), 0x00, 0x00, 0x00,        # dwLength
+            0x00,                                # bSlot
+            seq,                                 # bSeq
+            0x00, 0x00, 0x00                    # bSpecific
+        ])
+        message.extend(apdu)
+        return self._frame_message(bytes(message))
+
     # ========== Response Parsing ==========
 
     def parse_response(self, data: bytes) -> Tuple[int, int, int, bytes]:

@@ -331,10 +331,16 @@ class ULCScanner:
             response = self.serial.send_receive(cmd, timeout=2.0)
 
             if not response:
+                print("[ERROR] Power ON failed - no response")
                 return False, "Power ON 실패: 응답 없음"
 
             msg_type, status, error, payload = self.ccid.parse_response(response)
             print(f"[RX] Power ON: Status=0x{status:02X}, Error=0x{error:02X}")
+
+            # Check if Power ON succeeded
+            if not self.ccid.is_success(status, error):
+                print(f"[ERROR] Power ON failed - Status=0x{status:02X}, Error=0x{error:02X}")
+                return False, f"Power ON 실패: Status=0x{status:02X}, Error=0x{error:02X}"
 
             time.sleep(0.1)
 
@@ -426,8 +432,48 @@ class ULCScanner:
 
                 time.sleep(0.1)
 
+            # Step 6: Write authentication key to pages 44-47 using FF 87 command
+            if callback:
+                callback("카드에 인증키 쓰는 중...")
+
+            print(f"[INFO] Writing 16-byte key to pages 44-47 using FF 87 command")
+
+            cmd = self.ccid.write_auth_key()
+            print(f"[TX] Write Auth Key (FF 87): {' '.join(f'{b:02X}' for b in cmd)}")
+            response = self.serial.send_receive(cmd, timeout=2.0)
+
+            if not response:
+                return False, "인증키 쓰기 실패: 응답 없음"
+
+            msg_type, status, error, payload = self.ccid.parse_response(response)
+            print(f"[RX] Write Auth Key: Status=0x{status:02X}, Error=0x{error:02X}")
+            if len(payload) > 0:
+                print(f"[RX] Payload: {' '.join(f'{b:02X}' for b in payload)}")
+
+            # Check for success
+            if not self.ccid.is_success(status, error):
+                if len(payload) >= 2:
+                    sw1, sw2 = payload[0], payload[1]
+                    if sw1 != 0x90 or sw2 != 0x00:
+                        return False, f"인증키 쓰기 실패: SW1={sw1:02X} SW2={sw2:02X}"
+                return False, f"인증키 쓰기 실패: Status=0x{status:02X} Error=0x{error:02X}"
+
+            time.sleep(0.1)
+
             if callback:
                 callback("키 쓰기 완료!")
+
+            # Step 7: Power OFF
+            if callback:
+                callback("카드 전원 끄는 중...")
+
+            cmd = self.ccid.power_off()
+            print(f"[TX] Power OFF: {' '.join(f'{b:02X}' for b in cmd)}")
+            response = self.serial.send_receive(cmd, timeout=2.0)
+
+            if response:
+                msg_type, status, error, payload = self.ccid.parse_response(response)
+                print(f"[RX] Power OFF: Status=0x{status:02X}, Error=0x{error:02X}")
 
             end_time = datetime.now()
             elapsed = (end_time - start_time).total_seconds()
