@@ -164,3 +164,67 @@ def generate_random_key() -> bytes:
         16-byte random key
     """
     return secrets.token_bytes(16)
+
+
+def check_des_parity(key: bytes) -> tuple[bool, list[int]]:
+    """
+    Check DES parity bits for a 16-byte key
+
+    DES uses odd parity: each byte should have an odd number of 1 bits.
+    The 8th bit (LSB) of each byte is the parity bit.
+
+    Args:
+        key: 16-byte key to check
+
+    Returns:
+        Tuple of (all_valid: bool, invalid_byte_positions: list[int])
+        - all_valid: True if all bytes have correct parity
+        - invalid_byte_positions: List of byte positions (0-15) with incorrect parity
+    """
+    if len(key) != 16:
+        raise ValueError(f"Key must be exactly 16 bytes, got {len(key)}")
+
+    invalid_positions = []
+
+    for i, byte in enumerate(key):
+        # Count the number of 1 bits in the byte
+        ones_count = bin(byte).count('1')
+
+        # DES uses odd parity - the number of 1s should be odd
+        if ones_count % 2 == 0:  # Even number of 1s = incorrect parity
+            invalid_positions.append(i)
+
+    all_valid = len(invalid_positions) == 0
+    return all_valid, invalid_positions
+
+
+def fix_des_parity(key: bytes) -> bytes:
+    """
+    Fix DES parity bits for a 16-byte key
+
+    Adjusts the LSB (8th bit) of each byte to ensure odd parity.
+
+    Args:
+        key: 16-byte key to fix
+
+    Returns:
+        16-byte key with correct DES parity bits
+    """
+    if len(key) != 16:
+        raise ValueError(f"Key must be exactly 16 bytes, got {len(key)}")
+
+    fixed_key = bytearray(key)
+
+    for i in range(16):
+        byte = fixed_key[i]
+
+        # Count 1s in the upper 7 bits (ignore LSB parity bit)
+        ones_count = bin(byte >> 1).count('1')
+
+        # Set LSB to make total count odd
+        if ones_count % 2 == 0:  # Even number of 1s in upper 7 bits
+            fixed_key[i] = byte | 0x01  # Set LSB to 1
+        else:  # Odd number of 1s in upper 7 bits
+            fixed_key[i] = byte & 0xFE  # Clear LSB to 0
+
+    return bytes(fixed_key)

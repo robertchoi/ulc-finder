@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.serial_manager import SerialManager
 from core.ulc_scanner import ULCScanner, ScanResult
-from core.key_generator import KeyGenerator, generate_random_key, DEFAULT_MANUFACTURER_KEY
+from core.key_generator import KeyGenerator, generate_random_key, DEFAULT_MANUFACTURER_KEY, check_des_parity, fix_des_parity
 import time
 
 
@@ -212,6 +212,17 @@ class MainWindow(QMainWindow):
         btn_layout2.addStretch()
         layout.addLayout(btn_layout2)
 
+        # Buttons row 3: Parity Check
+        btn_layout3 = QHBoxLayout()
+
+        self.parity_check_btn = QPushButton("패리티 비트 체크")
+        self.parity_check_btn.clicked.connect(self._check_parity)
+        self.parity_check_btn.setStyleSheet("QPushButton { font-size: 12px; padding: 6px; background-color: #2196F3; color: white; }")
+        btn_layout3.addWidget(self.parity_check_btn)
+
+        btn_layout3.addStretch()
+        layout.addLayout(btn_layout3)
+
         group.setLayout(layout)
         return group
 
@@ -362,6 +373,52 @@ class MainWindow(QMainWindow):
         msg += "이 키를 안전한 곳에 백업하세요.\n"
         msg += "'카드에 인증키 쓰기' 버튼을 눌러 카드에 기록할 수 있습니다."
         QMessageBox.information(self, "인증키 발급 완료", msg)
+
+    def _check_parity(self):
+        """Check DES parity bits for the start key"""
+        # Parse key from start key input field
+        try:
+            hex_str = self.start_key_edit.toPlainText()
+            key = KeyGenerator.parse_key(hex_str)
+        except ValueError as e:
+            QMessageBox.critical(self, "입력 오류", f"키 형식이 잘못되었습니다:\n{e}")
+            return
+
+        # Check parity
+        all_valid, invalid_positions = check_des_parity(key)
+
+        if all_valid:
+            # All parity bits are correct
+            msg = "✓ 모든 바이트의 패리티 비트가 올바릅니다.\n\n"
+            msg += "DES 암호화에 사용할 수 있는 유효한 키입니다."
+            QMessageBox.information(self, "패리티 체크 통과", msg)
+        else:
+            # Some parity bits are incorrect
+            msg = "✗ 일부 바이트의 패리티 비트가 올바르지 않습니다.\n\n"
+            msg += f"잘못된 바이트 위치 (0-15): {', '.join(map(str, invalid_positions))}\n\n"
+            msg += "패리티 비트를 수정하시겠습니까?\n\n"
+            msg += "※ DES 알고리즘은 각 바이트에 홀수 패리티를 사용합니다.\n"
+            msg += "   (각 바이트의 1 비트 개수가 홀수여야 함)"
+
+            reply = QMessageBox.question(
+                self,
+                "패리티 체크 실패",
+                msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+
+            if reply == QMessageBox.Yes:
+                # Fix parity and update the input field
+                fixed_key = fix_des_parity(key)
+                fixed_key_hex = ' '.join(f'{b:02X}' for b in fixed_key)
+                self.start_key_edit.setPlainText(fixed_key_hex)
+
+                # Show confirmation
+                confirm_msg = "패리티 비트가 수정되었습니다.\n\n"
+                confirm_msg += f"수정된 키:\n{fixed_key_hex}\n\n"
+                confirm_msg += "※ 변경된 바이트는 LSB(최하위 비트)만 수정되었습니다."
+                QMessageBox.information(self, "패리티 수정 완료", confirm_msg)
 
     def _write_key_to_card(self):
         """Write authentication key to ULC card"""
