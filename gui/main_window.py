@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.serial_manager import SerialManager
 from core.ulc_scanner import ULCScanner, ScanResult
-from core.key_generator import KeyGenerator, generate_random_key
+from core.key_generator import KeyGenerator, generate_random_key, DEFAULT_MANUFACTURER_KEY
 import time
 
 
@@ -156,12 +156,24 @@ class MainWindow(QMainWindow):
         group = QGroupBox("키 스캔 설정")
         layout = QVBoxLayout()
 
+        # Default key input (for authentication when writing keys)
+        layout.addWidget(QLabel("디폴트 키 (Hex):"))
+
+        font = QFont("Courier New", 10)
+        self.default_key_edit = QPlainTextEdit()
+        # Set default manufacturer key: "!NACUOYFIEMKAERB" = "BREAKMEIFYOUCAN!" reversed
+        default_key_hex = ' '.join(f'{b:02X}' for b in DEFAULT_MANUFACTURER_KEY)
+        self.default_key_edit.setPlainText(default_key_hex)
+        self.default_key_edit.setMaximumHeight(60)
+        self.default_key_edit.setFont(font)
+        layout.addWidget(self.default_key_edit)
+
+        # Start key input
         layout.addWidget(QLabel("시작 키 (Hex):"))
 
         self.start_key_edit = QPlainTextEdit()
         self.start_key_edit.setPlainText("00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")
         self.start_key_edit.setMaximumHeight(60)
-        font = QFont("Courier New", 10)
         self.start_key_edit.setFont(font)
         layout.addWidget(self.start_key_edit)
 
@@ -353,12 +365,20 @@ class MainWindow(QMainWindow):
 
     def _write_key_to_card(self):
         """Write authentication key to ULC card"""
-        # Parse key from input field
+        # Parse new key from start key input field
         try:
             hex_str = self.start_key_edit.toPlainText()
             key = KeyGenerator.parse_key(hex_str)
         except ValueError as e:
-            QMessageBox.critical(self, "입력 오류", f"키 형식이 잘못되었습니다:\n{e}")
+            QMessageBox.critical(self, "입력 오류", f"새 키 형식이 잘못되었습니다:\n{e}")
+            return
+
+        # Parse auth key from default key input field
+        try:
+            auth_hex_str = self.default_key_edit.toPlainText()
+            auth_key = KeyGenerator.parse_key(auth_hex_str)
+        except ValueError as e:
+            QMessageBox.critical(self, "입력 오류", f"디폴트 키 형식이 잘못되었습니다:\n{e}")
             return
 
         # Disable buttons during write
@@ -380,8 +400,8 @@ class MainWindow(QMainWindow):
             progress.setLabelText(message)
             QApplication.processEvents()
 
-        # Write key to card (use the same key for both writing and authentication)
-        success, message = self.scanner.write_key_to_card(key, auth_key=key, callback=update_progress)
+        # Write key to card (use default key for authentication)
+        success, message = self.scanner.write_key_to_card(key, auth_key=auth_key, callback=update_progress)
 
         progress.close()
 

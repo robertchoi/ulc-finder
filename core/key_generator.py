@@ -137,8 +137,9 @@ class KeyGenerator:
 
 
 # Default manufacturer key for ULC
-DEFAULT_MANUFACTURER_KEY = bytes.fromhex('214E4143554F594649454D4B41455242')
-# ASCII: "!NACUOYFIEMKAERB" = "BREAKMEIFYOUCAN!" reversed
+# Hex: 49 45 4D 4B 41 45 52 42 21 4E 41 43 55 4F 59 46
+# ASCII: "IEMKAERB!NACUOYF" = "BREAKMEIFYOUCAN!" reversed
+DEFAULT_MANUFACTURER_KEY = bytes.fromhex('49454D4B41455242214E4143554F5946')
 
 
 def create_key_generator(start_key_hex: str) -> KeyGenerator:

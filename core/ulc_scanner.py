@@ -359,23 +359,25 @@ class ULCScanner:
 
             time.sleep(0.1)
 
-            # Step 3: Load current/default key to reader (for authentication)
-            # Use default manufacturer key for factory-fresh cards
-            # Or use the key currently set on the card if already programmed
+            # Step 3: Load authentication key to reader
+            # Use the auth_key from GUI's default key input field (or default manufacturer key if not provided)
             if callback:
-                callback("기본 인증키 로딩 중...")
+                callback("디폴트 인증키 로딩 중...")
 
-            # Default manufacturer key: "BREAKMEIFYOUCAN!" reversed = "!NACUOYFIEMKAERB"
-            # ASCII: ! N A C U O Y F I E M K A E R B
-            # Hex:  49 45 4D 4B 41 45 52 42 21 4E 41 43 55 4F 59 46
-            default_key = bytes.fromhex('49454D4B41455242214E4143554F5946')
+            # Use auth_key if provided, otherwise use default manufacturer key
+            if auth_key is None or len(auth_key) != 16:
+                # Default manufacturer key: "BREAKMEIFYOUCAN!" reversed = "!NACUOYFIEMKAERB"
+                # ASCII: ! N A C U O Y F I E M K A E R B
+                # Hex:  49 45 4D 4B 41 45 52 42 21 4E 41 43 55 4F 59 46
+                from .key_generator import DEFAULT_MANUFACTURER_KEY
+                auth_key = DEFAULT_MANUFACTURER_KEY
 
-            cmd = self.ccid.load_key(default_key, slot=3)
-            print(f"[TX] Load Default Key: {' '.join(f'{b:02X}' for b in default_key)}")
+            cmd = self.ccid.load_key(auth_key, slot=3)
+            print(f"[TX] Load Default Key: {' '.join(f'{b:02X}' for b in auth_key)}")
             response = self.serial.send_receive(cmd, timeout=1.0)
 
             if not response:
-                return False, "기본 키 로드 실패: 응답 없음"
+                return False, "디폴트 키 로드 실패: 응답 없음"
 
             msg_type, status, error, payload = self.ccid.parse_response(response)
             print(f"[RX] Load Key: Status=0x{status:02X}, Error=0x{error:02X}")
@@ -385,7 +387,7 @@ class ULCScanner:
                 if len(payload) >= 2:
                     sw1, sw2 = payload[0], payload[1]
                     if sw1 != 0x90 or sw2 != 0x00:
-                        return False, f"기본 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
+                        return False, f"디폴트 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
 
             time.sleep(0.1)
 
@@ -405,32 +407,28 @@ class ULCScanner:
 
             time.sleep(0.1)
 
-            # Step 5: Load key from input field (if provided)
-            if auth_key is not None:
-                if len(auth_key) != 16:
-                    return False, f"입력 키는 정확히 16바이트여야 합니다 (현재: {len(auth_key)}바이트)"
+            # Step 5: Load new key (to be written) to reader
+            if callback:
+                callback("새 인증키 로딩 중...")
 
-                if callback:
-                    callback("입력 필드의 키 로딩 중...")
+            cmd = self.ccid.load_key(key, slot=3)
+            print(f"[TX] Load New Key: {' '.join(f'{b:02X}' for b in key)}")
+            response = self.serial.send_receive(cmd, timeout=1.0)
 
-                cmd = self.ccid.load_key(auth_key, slot=3)
-                print(f"[TX] Load Key from input field: {' '.join(f'{b:02X}' for b in auth_key)}")
-                response = self.serial.send_receive(cmd, timeout=1.0)
+            if not response:
+                return False, "새 키 로드 실패: 응답 없음"
 
-                if not response:
-                    return False, "입력 키 로드 실패: 응답 없음"
+            msg_type, status, error, payload = self.ccid.parse_response(response)
+            print(f"[RX] Load New Key: Status=0x{status:02X}, Error=0x{error:02X}")
 
-                msg_type, status, error, payload = self.ccid.parse_response(response)
-                print(f"[RX] Load Key from input: Status=0x{status:02X}, Error=0x{error:02X}")
+            if not self.ccid.is_success(status, error):
+                # Check if response has SW1 SW2
+                if len(payload) >= 2:
+                    sw1, sw2 = payload[0], payload[1]
+                    if sw1 != 0x90 or sw2 != 0x00:
+                        return False, f"새 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
 
-                if not self.ccid.is_success(status, error):
-                    # Check if response has SW1 SW2
-                    if len(payload) >= 2:
-                        sw1, sw2 = payload[0], payload[1]
-                        if sw1 != 0x90 or sw2 != 0x00:
-                            return False, f"입력 키 로드 실패: SW1={sw1:02X} SW2={sw2:02X}"
-
-                time.sleep(0.1)
+            time.sleep(0.1)
 
             # Step 6: Write authentication key to pages 44-47 using FF 87 command
             if callback:
